@@ -1,38 +1,181 @@
-/* 
-================================================================================
-DATABASE EXPLORATION & MAGNITUDE ANALYSIS
-================================================================================
-Purpose:
-This script performs an initial exploration of the Gold-layer data warehouse
-to understand the available data, dimensions, date ranges, key business metrics,
-and the distribution of customers, products, sales, and revenue.
+-- 1. DATABASE EXPLORATION
+-- Explore the available tables and columns in the Gold layer
+-- Helps understand the database structure before performing analysis
 
-The analysis covers:
-1. Database Exploration
-   - Inspect available tables and columns in the database.
+-- EXPLORE ALL OBJECTS IN DATABASE
+SELECT * FROM INFORMATION_SCHEMA.TABLES;
 
-2. Dimension Exploration
-   - Explore customer countries, product categories, subcategories, and products.
+-- EXPLORE ALL COLUMNS IN DATABASE
+SELECT * FROM INFORMATION_SCHEMA.COLUMNS
+where TABLE_NAME = 'dim_customer';
 
-3. Date Exploration
-   - Identify the first and last order dates.
-   - Determine the available sales period.
-   - Analyze customer age ranges.
 
-4. Measures Exploration
-   - Calculate key business KPIs such as total sales, quantity sold,
-     average selling price, orders, products, and customers.
+-- 2. DIMENSION EXPLORATION
+-- Explore the main customer and product dimensions
+-- Helps understand the available categories and attributes for analysis
 
-5. Magnitude Analysis
-   - Analyze customers by country and gender.
-   - Analyze products and costs by category.
-   - Identify revenue contribution by category and customer.
-   - Rank top-performing products.
-   - Identify customers with the fewest orders.
+-- EXPLORE ALL COUNTRIES OUR CUSTOMERS COME FROM
+SELECT DISTINCT Country from gold.dim_customer;
 
-Goal:
-To gain a high-level understanding of the business data and establish
-key metrics and dimensions that will support further exploratory,
-comparative, and advanced analytical analysis.
-================================================================================
-*/
+-- EXPLORE THE CATEGORY, Subcategory,Productname
+SELECT Category, Subcategory,Product_name from gold.dim_products;
+
+
+-- 3. DATE EXPLORATION
+-- Explore the available date range and customer age distribution
+-- Helps understand the historical coverage of the dataset
+
+-- FIND DATE OF THE FIRST ORDER AND LAST ORDER
+SELECT MIN(Order_date) as First_Order,
+		MAX(Order_date) as Last_Order,
+-- HOW MANY YEARS OF SALES ARE AVAILABLE --
+	DATEDIFF(year,MIN(Order_date),Max(Order_date)) As order_range_years
+	from gold.fact_sales;
+
+-- FIND THE YOUNGEST AND OLDEST CUTSTOMER
+Select MIN(Birthday) as Oldest_Customer,
+DATEDIFF(year,Min(Birthday),getdate()) as Oldest_age,-- Get the age
+MAX(Birthday) as Youngest_Customer,
+DATEDIFF(year,Max(Birthday),getdate()) as Youngest_age -- Get the age
+from gold.dim_customer;
+
+
+-- 4. MEASURES EXPLORATION - KEY METRICS
+-- Calculate the main business KPIs to establish an overall performance baseline
+-- Includes sales, quantity, average price, orders, products, and customers
+
+-- FIND THE TOTAL SALES
+SELECT SUM(Sales) as total_sales from gold.fact_sales;
+
+-- FIND HOW MANY ITEMS ARE SOLD
+SELECT SUM(Quantity) as total_sold_items from gold.fact_sales;
+
+-- FIND THE AVERAGE	SELLING PRICE
+SELECT AVG(Price) as average_sales from gold.fact_sales;
+
+-- FIND THE TOTAL NUMBER OF ORDERS
+SELECT count(Order_number) as order_number from gold.fact_sales;
+SELECT  count( distinct Order_number) as order_number from gold.fact_sales;
+
+-- FIND THE TOTAL NUMBER OF Products
+SELECT COUNT(Product_key) as total_products from gold.dim_products;
+SELECT COUNT(DISTINCT Product_name) as total_number_products from gold.dim_products;
+
+-- FIND THE TOTAL NUMBER OF CUSTOMERS
+SELECT COUNT(Distinct Customer_key) as total_customers from gold.dim_customer;
+
+-- FIND THE TOTAL NUMBER OF CUSTOMERS THAT HAS PLACE AN ORDER
+SELECT COUNT(Distinct customer_key) as total_customers from gold.fact_sales;
+
+-- GENERATE A REPORT THAT SHOWS ALL KEY METRICS OF THE BUSINESS
+SELECT 'Total Sales'AS Measure_Name, SUM(Sales) as Measure_Value from gold.fact_sales
+UNION ALL
+SELECT 'Total Quantity', SUM(Quantity) from gold.fact_sales
+UNION ALL
+SELECT 'Average Price', AVG(Price) from gold.fact_sales
+UNION ALL
+SELECT 'Total Num Orders', count( distinct Order_number) from gold.fact_sales
+UNION ALL
+SELECT 'Total Num Products', COUNT(DISTINCT Product_name) from gold.dim_products
+union all
+SELECT 'Total Num Customers', COUNT(Distinct Customer_key) from gold.dim_customer;
+
+
+-- 5. MAGNITUDE ANALYSIS
+-- Analyze the size and distribution of customers, products, sales, and revenue
+-- Helps identify major contributors and areas with the highest business impact
+
+-- Find total customers by countries
+SELECT Country,
+count(Customer_key) as total_customer
+from gold.dim_customer
+Group by Country
+order by total_customer desc;
+
+-- Find total customers by gender
+Select Gender,
+count(customer_key) AS total_customer
+from gold.dim_customer
+group by Gender
+order by total_customer desc;
+
+-- Find total products by category
+select Category,
+count(Product_key) as total_prodcucts
+from gold.dim_products
+group by Category
+order by total_prodcucts DESC;
+
+-- What is the average costs in each category?
+SELECT Category,
+avg(Cost) as avg_cost
+from gold.dim_products
+group by Category
+ORDER BY avg_cost desc;
+
+-- What is the total revenue generated for each category?
+Select sum(Sales) as total_revenue, p.Category
+from gold.fact_sales f
+Left Join gold.dim_products p
+on f.Product_Key = p.Product_Key
+group by Category
+Order by total_revenue DESC;
+
+-- Find total revenue is generated by each customer
+Select c.Customer_key, c.Firstname, c.Lastname, Sum(f.Sales) as total_revenue
+from gold.dim_customer c
+Left Join gold.fact_sales f
+on c.Customer_key = f.Customer_key
+group by c.Customer_key, c.Firstname, c.Lastname
+Order by total_revenue DESC;
+
+-- What is the distribution of sold items across countries?
+SELECT c.Country, SUM(f.Sales) as total_sales
+from gold.dim_customer c
+left join gold.fact_sales f
+on c.Customer_key = f.Customer_key
+group by Country
+Order by total_sales;
+
+-- Which 5 products generate the highest revenue?
+SELECT * FROM (
+Select p.Product_name,
+       Sum(f.Sales) as total_revenue,
+	   Rank() Over( Order by  Sum(f.Sales) DESC) as rank_product
+	   from gold.fact_sales f
+	   left join  gold.dim_products p
+	   on p.Product_Key = f.Product_Key
+	   group by Product_name)T
+	   WHERE rank_product <=5;
+
+-- TOP 3 customers with the fewest orders placed
+
+	/*select * from (
+	SELECT c.Customer_Key, c.Firstname, c.Lastname,
+	Count(Distinct f.Order_number) as orders,
+	ROW_NUMBER() over(order by Count(Distinct f.Order_number)ASC,c.Customer_Key asc) as ranks
+	from gold.dim_customer c
+	inner join gold.fact_sales f
+	on c.Customer_key = f.Customer_key
+	group by c.Customer_Key, c.Firstname, c.Lastname)t
+	where orders <=3;*/
+
+	
+-- TOP 3 customers with the fewest orders placed
+-- Identifies customers with the lowest order frequency
+
+	SELECT TOP 3
+    c.Customer_Key,
+    c.Firstname,
+    c.Lastname,
+    COUNT(DISTINCT f.Order_number) AS orders
+FROM gold.dim_customer c
+INNER JOIN gold.fact_sales f
+    ON c.Customer_Key = f.Customer_Key
+GROUP BY
+    c.Customer_Key,
+    c.Firstname,
+    c.Lastname
+ORDER BY
+    orders ASC,
+    c.Customer_Key ASC;
